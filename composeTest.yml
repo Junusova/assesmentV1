@@ -1,0 +1,88 @@
+version: "2.4"
+services:
+  frontend:
+    image: 656441281717.dkr.ecr.us-west-1.amazonaws.com/asprodental-frontend:${BRANCH:-dev}-latest
+    environment:
+      - API_URL=http://backend:8080
+    ports:
+      - 8000:80
+  backend:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    image: 656441281717.dkr.ecr.us-west-1.amazonaws.com/asprodental-backend:${BRANCH:-dev}-latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GRADLE_USER_HOME=.gradle
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=asprodental
+      - SPRING_PROFILE=docker
+      - SENTRY_ENABLED=false
+      - TEST_MODE_RECIEVER=nursultan.kubenov@zensoft.io
+      - TEST_MODE=true
+      - TEST_MODE_SEND_EMAIL=false
+      - AWS_CRED_ACCESS_KEY=test
+      - AWS_CRED_SECRET_KEY=test
+      - AWS_CRED_REGION=us-west-1
+      - APP_DOMAIN_URL=http://frontend
+    ports:
+      - 8080:8080
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+  postgres:
+    image: postgres:9-alpine
+    ports:
+      - 5434:5432
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=asprodental
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  selenoid:
+    image: aerokube/selenoid:latest
+    volumes:
+      - ./selenoid:/etc/selenoid:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      [
+        "-container-network",
+        "${COMPOSE_PROJECT_NAME:?You must do 'export COMPOSE_PROJECT_NAME=$(basename $PWD)' to launch}_default",
+        "-service-startup-timeout",
+        "3m",
+        "-session-attempt-timeout",
+        "3m",
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4444"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  endToEndTests:
+    image: openjdk:8-jdk-alpine
+    depends_on:
+      selenoid:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    user: "${UID:?You must do 'export UID' to launch}"
+    command: ./gradlew  --console=plain --no-daemon endToEndTests
+    volumes:
+      - .:/code
+    working_dir: /code
+    environment:
+      - SELENOID_HOST=selenoid
+      - INSTANCE_URL=http://frontend
+      - POSTGRES_JDBC_URL=jdbc:postgresql://postgres:5432/asprodental
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
